@@ -47,12 +47,14 @@ HAND_CONNECTIONS = [
 # ─── Gesture State ────────────────────────────────────────────────────────────
 
 gesture_state = {
-    "locked":               False,
-    "selection_anchor":     None,
-    "selection_thumb_dir":  None,
-    "current_note":         None,
-    "current_quality":      "major",
-    "last_played":          None,
+    "locked": False,
+    "selection_anchor": None,
+    "selection_thumb_dir": None,
+    "current_note": None,
+    "current_quality": "major",
+    "last_played": None,
+    "prev_thumb_out": False,
+    "stop_cooldown": 0,
 }
 
 
