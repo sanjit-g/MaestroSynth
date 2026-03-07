@@ -136,18 +136,28 @@ def classify_chord_quality(lm) -> str:
     )
     return CHORD_QUALITY_MAP.get(combo, "major")
 
-def classify_thumb(lm) -> str:
-    """
-    Classify thumb direction relative to its MCP joint.
+def classify_thumb(lm):
+    base = lm[1]
+    tip = lm[4]
 
-    Returns:
-        str: One of 'THUMB UP', 'THUMB DOWN', 'THUMB LEFT', 'THUMB RIGHT'
-    """
-    dx = lm[4].x - lm[2].x
-    dy = lm[4].y - lm[2].y
-    if abs(dx) > abs(dy):
-        return "THUMB RIGHT" if dx > 0 else "THUMB LEFT"
-    return "THUMB UP" if dy < 0 else "THUMB DOWN"
+    dx = tip.x - base.x
+    dy = tip.y - base.y
+
+    angle = math.degrees(math.atan2(-dy, dx))
+    # atan2(-dy, dx):
+    #   right = 0
+    #   up = 90
+    #   left = 180 or -180
+    #   down = -90
+
+    if -45 <= angle < 45:
+        return "THUMB RIGHT"
+    elif 45 <= angle < 135:
+        return "THUMB UP"
+    elif angle >= 135 or angle < -135:
+        return "THUMB LEFT"
+    else:
+        return "THUMB DOWN"
 
 def movement_bucket(anchor: tuple, current: tuple, threshold: float = 0.08):
     """
