@@ -59,6 +59,24 @@ gesture_state = {
 
 
 # ─── Landmark Math ────────────────────────────────────────────────────────────
+def vec3(a, b):
+    return (b.x - a.x, b.y - a.y, b.z - a.z)
+
+def norm3(v, eps=1e-8):
+    mag = math.sqrt(v[0]**2 + v[1]**2 + v[2]**2)
+    if mag < eps:
+        return (0.0, 0.0, 0.0)
+    return (v[0]/mag, v[1]/mag, v[2]/mag)
+
+def dot3(a, b):
+    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+
+def cross3(a, b):
+    return (
+        a[1]*b[2] - a[2]*b[1],
+        a[2]*b[0] - a[0]*b[2],
+        a[0]*b[1] - a[1]*b[0]
+    )
 
 def normalize2(vx, vy, eps=1e-8):
     mag = math.sqrt(vx * vx + vy * vy)
@@ -145,18 +163,7 @@ def classify_chord_quality(lm) -> str:
     )
     return CHORD_QUALITY_MAP.get(combo, "major")
 
-def classify_thumb(lm, dominance_threshold=0.25):
-    """
-    Classify thumb direction in a hand-relative frame instead of screen frame.
-
-    Axes:
-      hand_up    = wrist -> middle MCP
-      hand_right = index MCP -> pinky MCP   (across palm)
-
-    Returns one of:
-      THUMB UP, THUMB DOWN, THUMB LEFT, THUMB RIGHT
-    """
-
+def classify_thumb(lm, min_strength=0.25):
     wrist = lm[0]
     index_mcp = lm[5]
     middle_mcp = lm[9]
@@ -164,39 +171,22 @@ def classify_thumb(lm, dominance_threshold=0.25):
     thumb_base = lm[1]
     thumb_tip = lm[4]
 
-    # Hand "up" axis: wrist -> middle MCP
-    up_x = middle_mcp.x - wrist.x
-    up_y = middle_mcp.y - wrist.y
-    up_x, up_y = normalize2(up_x, up_y)
+    hand_up = norm3(vec3(wrist, middle_mcp))
+    wrist_to_index = norm3(vec3(wrist, index_mcp))
+    wrist_to_pinky = norm3(vec3(wrist, pinky_mcp))
+    palm_normal = norm3(cross3(wrist_to_index, wrist_to_pinky))
+    hand_right = norm3(cross3(hand_up, palm_normal))
+    thumb_vec = norm3(vec3(thumb_base, thumb_tip))
 
-    # Hand "right" axis: index MCP -> pinky MCP
-    # This is across the palm.
-    right_x = pinky_mcp.x - index_mcp.x
-    right_y = pinky_mcp.y - index_mcp.y
-    right_x, right_y = normalize2(right_x, right_y)
+    up_score = dot3(thumb_vec, hand_up)
+    right_score = dot3(thumb_vec, hand_right)
 
-    # Thumb direction vector
-    thumb_x = thumb_tip.x - thumb_base.x
-    thumb_y = thumb_tip.y - thumb_base.y
-    thumb_x, thumb_y = normalize2(thumb_x, thumb_y)
-
-    # Project thumb onto the local axes
-    up_score = dot(thumb_x, thumb_y, up_x, up_y)
-    right_score = dot(thumb_x, thumb_y, right_x, right_y)
-
-    # Decide based on whichever local axis dominates
-    if abs(up_score) > abs(right_score):
-        if up_score > dominance_threshold:
-            return "THUMB UP"
-        elif up_score < -dominance_threshold:
-            return "THUMB DOWN"
+    if abs(up_score) >= abs(right_score) and abs(up_score) > min_strength:
+        return "THUMB UP" if up_score > 0 else "THUMB DOWN"
+    elif abs(right_score) > min_strength:
+        return "THUMB RIGHT" if right_score > 0 else "THUMB LEFT"
     else:
-        if right_score > dominance_threshold:
-            return "THUMB RIGHT"
-        elif right_score < -dominance_threshold:
-            return "THUMB LEFT"
-
-    return None
+        return None
 
 def movement_bucket(anchor: tuple, current: tuple, threshold: float = 0.08):
     """
