@@ -60,6 +60,15 @@ gesture_state = {
 
 # ─── Landmark Math ────────────────────────────────────────────────────────────
 
+def normalize2(vx, vy, eps=1e-8):
+    mag = math.sqrt(vx * vx + vy * vy)
+    if mag < eps:
+        return 0.0, 0.0
+    return vx / mag, vy / mag
+
+def dot(ax, ay, bx, by):
+    return ax * bx + ay * by
+
 def dist(a, b) -> float:
     """Euclidean distance between two MediaPipe landmarks."""
     return math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2)
@@ -136,28 +145,58 @@ def classify_chord_quality(lm) -> str:
     )
     return CHORD_QUALITY_MAP.get(combo, "major")
 
-def classify_thumb(lm):
-    base = lm[1]
-    tip = lm[4]
+def classify_thumb(lm, dominance_threshold=0.25):
+    """
+    Classify thumb direction in a hand-relative frame instead of screen frame.
 
-    dx = tip.x - base.x
-    dy = tip.y - base.y
+    Axes:
+      hand_up    = wrist -> middle MCP
+      hand_right = index MCP -> pinky MCP   (across palm)
 
-    angle = math.degrees(math.atan2(-dy, dx))
-    # atan2(-dy, dx):
-    #   right = 0
-    #   up = 90
-    #   left = 180 or -180
-    #   down = -90
+    Returns one of:
+      THUMB UP, THUMB DOWN, THUMB LEFT, THUMB RIGHT
+    """
 
-    if -45 <= angle < 45:
-        return "THUMB RIGHT"
-    elif 45 <= angle < 135:
-        return "THUMB UP"
-    elif angle >= 135 or angle < -135:
-        return "THUMB LEFT"
+    wrist = lm[0]
+    index_mcp = lm[5]
+    middle_mcp = lm[9]
+    pinky_mcp = lm[17]
+    thumb_base = lm[1]
+    thumb_tip = lm[4]
+
+    # Hand "up" axis: wrist -> middle MCP
+    up_x = middle_mcp.x - wrist.x
+    up_y = middle_mcp.y - wrist.y
+    up_x, up_y = normalize2(up_x, up_y)
+
+    # Hand "right" axis: index MCP -> pinky MCP
+    # This is across the palm.
+    right_x = pinky_mcp.x - index_mcp.x
+    right_y = pinky_mcp.y - index_mcp.y
+    right_x, right_y = normalize2(right_x, right_y)
+
+    # Thumb direction vector
+    thumb_x = thumb_tip.x - thumb_base.x
+    thumb_y = thumb_tip.y - thumb_base.y
+    thumb_x, thumb_y = normalize2(thumb_x, thumb_y)
+
+    # Project thumb onto the local axes
+    up_score = dot(thumb_x, thumb_y, up_x, up_y)
+    right_score = dot(thumb_x, thumb_y, right_x, right_y)
+
+    # Decide based on whichever local axis dominates
+    if abs(up_score) > abs(right_score):
+        if up_score > dominance_threshold:
+            return "THUMB UP"
+        elif up_score < -dominance_threshold:
+            return "THUMB DOWN"
     else:
-        return "THUMB DOWN"
+        if right_score > dominance_threshold:
+            return "THUMB RIGHT"
+        elif right_score < -dominance_threshold:
+            return "THUMB LEFT"
+
+    return None
 
 def movement_bucket(anchor: tuple, current: tuple, threshold: float = 0.08):
     """
