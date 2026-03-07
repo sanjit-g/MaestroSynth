@@ -237,91 +237,67 @@ def draw_hud(frame, gesture_result: dict, midi_port_name: str):
 
 # ─── State Machine ────────────────────────────────────────────────────────────
 
-def handle_gesture(landmarks) -> dict:
-    """
-    Process one frame's hand landmarks through the gesture state machine.
-
-    Gesture logic:
-      - Fist in center         → stop all sound
-      - Thumb folded in        → lock current chord
-      - Thumb out + movement   → select note from NOTE_GRID
-      - Thumb out, no movement → arming (waiting for direction)
-
-    Args:
-        landmarks: One hand's 21 landmarks from MediaPipe.
-
-    Returns:
-        dict with keys: action, note, quality, locked, (thumb_dir, move_dir)
-    """
+def handle_gesture(landmarks):
     global gesture_state
 
-    # Stop gesture
-    if is_fist(landmarks) and in_center_zone(landmarks):
-        gesture_to_note("stop", "stop")
-        gesture_state.update({
-            "locked":              False,
-            "selection_anchor":    None,
-            "selection_thumb_dir": None,
-            "current_note":        None,
-            "last_played":         None,
-        })
-        return {"action": "stop", "note": None, "quality": None, "locked": False}
+    thumb_out = thumb_is_out(landmarks)
+    fist_now = is_fist(landmarks) and in_center_zone(landmarks)
 
-    thumb_out      = thumb_is_out(landmarks)
-    quality        = classify_chord_quality(landmarks)
-    current_center = hand_center(landmarks)
+    # cooldown after stop
+    if gesture_state["stop_cooldown"] > 0:
+        gesture_state["stop_cooldown"] -= 1
+        gesture_state["prev_thumb_out"] = thumb_out
+        return {
+            "action": "cooldown",
+            "note": None,
+            "quality": None,
+            "locked": False
+        }
 
-    # Thumb in → lock
-    if not thumb_out:
+    # STOP gesture
+    if fist_now:
+        stop_chord()
+        gesture_state["locked"] = False
+        gesture_state["selection_anchor"] = None
+        gesture_state["selection_thumb_dir"] = None
+        gesture_state["current_note"] = None
+        gesture_state["last_played"] = None
+        gesture_state["stop_cooldown"] = 8   # ignore input for a few frames
+        gesture_state["prev_thumb_out"] = thumb_out
+        return {
+            "action": "stop",
+            "note": None,
+            "quality": None,
+            "locked": False
+        }
+
+    # LOCK only on transition: thumb out -> thumb in
+    if gesture_state["prev_thumb_out"] and not thumb_out:
         if gesture_state["current_note"] is not None:
             gesture_state["locked"] = True
-        gesture_state["selection_anchor"]    = None
+        gesture_state["selection_anchor"] = None
         gesture_state["selection_thumb_dir"] = None
-        gesture_state["current_quality"]     = quality
+        gesture_state["prev_thumb_out"] = thumb_out
         return {
-            "action":  "locked" if gesture_state["current_note"] else "idle",
-            "note":    gesture_state["current_note"],
+            "action": "locked",
+            "note": gesture_state["current_note"],
             "quality": gesture_state["current_quality"],
-            "locked":  gesture_state["locked"],
+            "locked": gesture_state["locked"]
         }
 
-    # Thumb out → selection mode
-    thumb_dir = classify_thumb(landmarks)
-
-    if gesture_state["locked"]:
-        gesture_state["locked"] = False
-
-    if (gesture_state["selection_anchor"] is None or
-            gesture_state["selection_thumb_dir"] != thumb_dir):
-        gesture_state["selection_anchor"]    = current_center
-        gesture_state["selection_thumb_dir"] = thumb_dir
-
-    move_dir = movement_bucket(gesture_state["selection_anchor"], current_center)
-
-    if move_dir is not None:
-        note        = NOTE_GRID[thumb_dir][move_dir]
-        chord_tuple = (note, quality)
-        gesture_state["current_note"]    = note
-        gesture_state["current_quality"] = quality
-
-        if gesture_state["last_played"] != chord_tuple:
-            gesture_to_note(note, quality)
-            gesture_state["last_played"] = chord_tuple
-
+    # if locked, do nothing until thumb comes back out
+    if gesture_state["locked"] and not thumb_out:
+        gesture_state["prev_thumb_out"] = thumb_out
         return {
-            "action":    "selecting",
-            "note":      note,
-            "quality":   quality,
-            "locked":    False,
-            "thumb_dir": thumb_dir,
-            "move_dir":  move_dir,
+            "action": "holding_locked",
+            "note": gesture_state["current_note"],
+            "quality": gesture_state["current_quality"],
+            "locked": True
         }
 
-    return {
-        "action":    "arming_selection",
-        "note":      gesture_state["current_note"],
-        "quality":   quality,
-        "locked":    False,
-        "thumb_dir": thumb_dir,
-        "move_dir":  None,
-    }
+    # thumb out means unlock and allow reselection
+    if thumb_out:
+        gesture_state["locked"] = False
+        # selection logic here ...
+
+    gesture_state["prev_thumb_out"] = thumb_out
