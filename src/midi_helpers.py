@@ -2,14 +2,14 @@ import mido
 
 # ─── Global State ─────────────────────────────────────────────────────────────
 
-chromatic_scale = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+chromatic_scale = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
+
+
 BASE_MIDI_NOTE  = 60
 MAX_PARAM_INDEX = 7
 
 midi_out = None  # Set by init_midi()
 
-
-# ─── Setup ────────────────────────────────────────────────────────────────────
 
 def init_midi() -> str:
     """
