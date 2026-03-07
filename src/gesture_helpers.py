@@ -66,7 +66,7 @@ def norm3(v, eps=1e-8):
     mag = math.sqrt(v[0]**2 + v[1]**2 + v[2]**2)
     if mag < eps:
         return (0.0, 0.0, 0.0)
-    return (v[0]/mag, v[1]/mag, v[2]/mag)
+    return (v[0] / mag, v[1] / mag, v[2] / mag)
 
 def dot3(a, b):
     return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
@@ -77,6 +77,9 @@ def cross3(a, b):
         a[2]*b[0] - a[0]*b[2],
         a[0]*b[1] - a[1]*b[0]
     )
+
+def dist3(a, b):
+    return math.sqrt((a.x - b.x)**2 + (a.y - b.y)**2 + (a.z - b.z)**2)
 
 def normalize2(vx, vy, eps=1e-8):
     mag = math.sqrt(vx * vx + vy * vy)
@@ -91,18 +94,73 @@ def dist(a, b) -> float:
     """Euclidean distance between two MediaPipe landmarks."""
     return math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2)
 
-def hand_center(lm) -> tuple:
+def hand_center(lm):
     """
-    Approximate palm center using wrist + MCP joints.
-
-    Returns:
-        tuple[float, float]: Normalized (x, y) in [0, 1].
+    Palm center in normalized image coordinates.
     """
     palm_ids = [0, 5, 9, 13, 17]
     cx = sum(lm[i].x for i in palm_ids) / len(palm_ids)
     cy = sum(lm[i].y for i in palm_ids) / len(palm_ids)
     return (cx, cy)
 
+def finger_extended(lm, tip_id, pip_id, wrist_id=0, margin=0.015):
+    """
+    Finger considered extended if the tip is farther from the wrist
+    than the PIP joint by some margin.
+    """
+    tip_dist = dist3(lm[tip_id], lm[wrist_id])
+    pip_dist = dist3(lm[pip_id], lm[wrist_id])
+    return tip_dist > pip_dist + margin
+
+def thumb_is_out(lm, margin=0.02):
+    """
+    Thumb is 'out' if the thumb tip is meaningfully farther from the wrist
+    than the inner thumb joints.
+
+    This is separate from thumb direction.
+    """
+    wrist = lm[0]
+    thumb_tip = lm[4]
+    thumb_ip = lm[3]
+    thumb_mcp = lm[2]
+
+    tip_dist = dist3(thumb_tip, wrist)
+    ip_dist = dist3(thumb_ip, wrist)
+    mcp_dist = dist3(thumb_mcp, wrist)
+
+    return tip_dist > ip_dist + margin and tip_dist > mcp_dist + margin
+
+def classify_chord_quality(lm):
+    """
+    index / middle / pinky choose chord quality.
+    ring is ignored.
+    """
+    index_on = finger_extended(lm, 8, 6)
+    middle_on = finger_extended(lm, 12, 10)
+    pinky_on = finger_extended(lm, 20, 18)
+
+    combo = (index_on, middle_on, pinky_on)
+    return CHORD_QUALITY_MAP.get(combo, "major")
+
+def is_fist(lm):
+    """
+    Rough fist detection:
+    all non-thumb fingers curled and thumb not out.
+    """
+    index_on = finger_extended(lm, 8, 6)
+    middle_on = finger_extended(lm, 12, 10)
+    ring_on = finger_extended(lm, 16, 14)
+    pinky_on = finger_extended(lm, 20, 18)
+    thumb_out = thumb_is_out(lm)
+
+    return (not index_on and not middle_on and not ring_on and not pinky_on and not thumb_out)
+
+def in_center_zone(lm, margin=0.18):
+    """
+    Stop gesture only works near center of frame.
+    """
+    cx, cy = hand_center(lm)
+    return abs(cx - 0.5) < margin and abs(cy - 0.5) < margin
 
 # ─── Finger State Checks ──────────────────────────────────────────────────────
 
@@ -120,14 +178,6 @@ def finger_extended(lm, tip_id: int, pip_id: int, wrist_id: int = 0, margin: flo
         margin   : Extra distance threshold to avoid noise
     """
     return dist(lm[tip_id], lm[wrist_id]) > dist(lm[pip_id], lm[wrist_id]) + margin
-
-def thumb_is_out(lm, margin: float = 0.03) -> bool:
-    """
-    Check if the thumb is extended.
-
-    Thumb tip must be noticeably farther from wrist than the thumb IP/MCP area.
-    """
-    return dist(lm[4], lm[0]) > dist(lm[2], lm[0]) + margin
 
 def is_fist(lm) -> bool:
     """All four fingers curled and thumb not extended."""
@@ -147,23 +197,20 @@ def in_center_zone(lm, center_margin: float = 0.18) -> bool:
 
 # ─── Classification ───────────────────────────────────────────────────────────
 
-def classify_chord_quality(lm) -> str:
-    """
-    Classify chord quality from finger extension state.
 
-    Uses index, middle, and pinky fingers as selectors. Ring finger ignored.
+def classify_thumb(lm, min_strength=0.20):
+    """
+    Classify thumb direction relative to the hand, not the screen.
+
+    Hand-local axes:
+      hand_up    = wrist -> middle MCP
+      palm_normal = cross(wrist->index MCP, wrist->pinky MCP)
+      hand_right = cross(hand_up, palm_normal)
 
     Returns:
-        str: One of 'major', 'minor', 'maj7', 'min7', '7'
+      "THUMB UP", "THUMB DOWN", "THUMB LEFT", "THUMB RIGHT", or None
     """
-    combo = (
-        finger_extended(lm, 8,  6),   # index
-        finger_extended(lm, 12, 10),  # middle
-        finger_extended(lm, 20, 18),  # pinky
-    )
-    return CHORD_QUALITY_MAP.get(combo, "major")
 
-def classify_thumb(lm, min_strength=0.25):
     wrist = lm[0]
     index_mcp = lm[5]
     middle_mcp = lm[9]
@@ -172,15 +219,21 @@ def classify_thumb(lm, min_strength=0.25):
     thumb_tip = lm[4]
 
     hand_up = norm3(vec3(wrist, middle_mcp))
+
     wrist_to_index = norm3(vec3(wrist, index_mcp))
     wrist_to_pinky = norm3(vec3(wrist, pinky_mcp))
+
     palm_normal = norm3(cross3(wrist_to_index, wrist_to_pinky))
+
+    # If left/right seems reversed in practice, swap cross order here
     hand_right = norm3(cross3(hand_up, palm_normal))
+
     thumb_vec = norm3(vec3(thumb_base, thumb_tip))
 
     up_score = dot3(thumb_vec, hand_up)
     right_score = dot3(thumb_vec, hand_right)
 
+    # pick whichever axis dominates
     if abs(up_score) >= abs(right_score) and abs(up_score) > min_strength:
         return "THUMB UP" if up_score > 0 else "THUMB DOWN"
     elif abs(right_score) > min_strength:
@@ -188,34 +241,33 @@ def classify_thumb(lm, min_strength=0.25):
     else:
         return None
 
-def movement_bucket(anchor: tuple, current: tuple, threshold: float = 0.08):
+
+def movement_bucket(anchor, current, threshold=0.06):
     """
-    Determine hand movement direction from an anchor point.
-
-    Only LEFT, UP, and RIGHT are returned — no DOWN.
-    Image coordinates: x increases right, y increases downward.
-
-    Args:
-        anchor    : (x, y) reference position
-        current   : (x, y) current hand center
-        threshold : Minimum displacement to register a direction
-
-    Returns:
-        str | None: 'LEFT', 'UP', 'RIGHT', or None if not enough movement
+    Compare current palm center to selection anchor.
+    User can move hand LEFT / UP / RIGHT to choose the note.
     """
-    dx = current[0] - anchor[0]
-    dy = current[1] - anchor[1]
+    ax, ay = anchor
+    cx, cy = current
 
+    dx = cx - ax
+    dy = cy - ay
+
+    # Not enough movement yet
     if abs(dx) < threshold and abs(dy) < threshold:
         return None
+
+    # Up if upward movement dominates
     if dy < -threshold and abs(dy) >= abs(dx):
         return "UP"
+
     if dx < -threshold:
         return "LEFT"
+
     if dx > threshold:
         return "RIGHT"
-    return None
 
+    return None
 
 # ─── Drawing ──────────────────────────────────────────────────────────────────
 
@@ -277,66 +329,183 @@ def draw_hud(frame, gesture_result: dict, midi_port_name: str):
 # ─── State Machine ────────────────────────────────────────────────────────────
 
 def handle_gesture(landmarks):
+    """
+    Right-hand gesture state machine.
+
+    Behavior:
+    - Thumb out => selection mode
+    - Thumb direction chooses note group
+    - Hand movement LEFT / UP / RIGHT chooses specific root note
+    - Index / middle / pinky choose chord quality
+    - Thumb out -> thumb in transition locks chord
+    - Fist in center stops sound
+    """
+
     global gesture_state
 
-    thumb_out = thumb_is_out(landmarks)
-    fist_now = is_fist(landmarks) and in_center_zone(landmarks)
-
-    # cooldown after stop
+    # -----------------------------------------------------
+    # 1. Cooldown after STOP
+    # -----------------------------------------------------
     if gesture_state["stop_cooldown"] > 0:
         gesture_state["stop_cooldown"] -= 1
-        gesture_state["prev_thumb_out"] = thumb_out
+        gesture_state["debug_text"] = f"COOLDOWN {gesture_state['stop_cooldown']}"
+        gesture_state["prev_thumb_out"] = thumb_is_out(landmarks)
         return {
             "action": "cooldown",
+            "locked": False,
             "note": None,
-            "quality": None,
-            "locked": False
+            "quality": None
         }
 
-    # STOP gesture
+    # -----------------------------------------------------
+    # 2. Read current hand state
+    # -----------------------------------------------------
+    current_center = hand_center(landmarks)
+    thumb_out = thumb_is_out(landmarks)
+    chord_quality = classify_chord_quality(landmarks)
+    fist_now = is_fist(landmarks) and in_center_zone(landmarks)
+
+    thumb_dir = None
+    if thumb_out:
+        thumb_dir = classify_thumb(landmarks)
+
+    # -----------------------------------------------------
+    # 3. STOP gesture
+    # -----------------------------------------------------
     if fist_now:
         stop_chord()
+
+        gesture_state["mode"] = "IDLE"
         gesture_state["locked"] = False
         gesture_state["selection_anchor"] = None
         gesture_state["selection_thumb_dir"] = None
         gesture_state["current_note"] = None
+        gesture_state["current_quality"] = "major"
         gesture_state["last_played"] = None
-        gesture_state["stop_cooldown"] = 8   # ignore input for a few frames
+        gesture_state["stop_cooldown"] = 6
+        gesture_state["debug_text"] = "STOP"
         gesture_state["prev_thumb_out"] = thumb_out
+
         return {
             "action": "stop",
+            "locked": False,
             "note": None,
-            "quality": None,
-            "locked": False
+            "quality": None
         }
 
-    # LOCK only on transition: thumb out -> thumb in
+    # -----------------------------------------------------
+    # 4. Lock event: thumb was out, now is in
+    # -----------------------------------------------------
     if gesture_state["prev_thumb_out"] and not thumb_out:
         if gesture_state["current_note"] is not None:
+            gesture_state["mode"] = "LOCKED"
             gesture_state["locked"] = True
+            gesture_state["current_quality"] = chord_quality
+            gesture_state["debug_text"] = f"LOCKED {gesture_state['current_note']} {gesture_state['current_quality']}"
+        else:
+            gesture_state["mode"] = "IDLE"
+            gesture_state["locked"] = False
+            gesture_state["debug_text"] = "IDLE"
+
         gesture_state["selection_anchor"] = None
         gesture_state["selection_thumb_dir"] = None
         gesture_state["prev_thumb_out"] = thumb_out
+
         return {
-            "action": "locked",
+            "action": "locked" if gesture_state["locked"] else "idle",
+            "locked": gesture_state["locked"],
             "note": gesture_state["current_note"],
-            "quality": gesture_state["current_quality"],
-            "locked": gesture_state["locked"]
+            "quality": gesture_state["current_quality"]
         }
 
-    # if locked, do nothing until thumb comes back out
-    if gesture_state["locked"] and not thumb_out:
+    # -----------------------------------------------------
+    # 5. If locked and thumb is still in, hold chord
+    # -----------------------------------------------------
+    if gesture_state["mode"] == "LOCKED" and not thumb_out:
+        gesture_state["debug_text"] = f"HOLD {gesture_state['current_note']} {gesture_state['current_quality']}"
         gesture_state["prev_thumb_out"] = thumb_out
         return {
             "action": "holding_locked",
+            "locked": True,
             "note": gesture_state["current_note"],
-            "quality": gesture_state["current_quality"],
-            "locked": True
+            "quality": gesture_state["current_quality"]
         }
 
-    # thumb out means unlock and allow reselection
+    # -----------------------------------------------------
+    # 6. Thumb out => selection mode
+    # -----------------------------------------------------
     if thumb_out:
+        gesture_state["mode"] = "SELECTING"
         gesture_state["locked"] = False
-        # selection logic here ...
+        gesture_state["current_quality"] = chord_quality
 
+        # If thumb direction can't be confidently classified yet, wait
+        if thumb_dir is None:
+            gesture_state["debug_text"] = "SELECTING: thumb unclear"
+            gesture_state["prev_thumb_out"] = thumb_out
+            return {
+                "action": "selecting_unclear_thumb",
+                "locked": False,
+                "note": gesture_state["current_note"],
+                "quality": chord_quality
+            }
+
+        # Reset anchor whenever selection starts or thumb direction changes
+        if (gesture_state["selection_anchor"] is None or
+            gesture_state["selection_thumb_dir"] != thumb_dir):
+            gesture_state["selection_anchor"] = current_center
+            gesture_state["selection_thumb_dir"] = thumb_dir
+
+        move_dir = movement_bucket(gesture_state["selection_anchor"], current_center)
+
+        if move_dir is None:
+            gesture_state["debug_text"] = f"SELECTING {thumb_dir} (waiting for motion)"
+            gesture_state["prev_thumb_out"] = thumb_out
+            return {
+                "action": "arming_selection",
+                "locked": False,
+                "thumb_dir": thumb_dir,
+                "note": gesture_state["current_note"],
+                "quality": chord_quality
+            }
+
+        # Determine note from thumb group + motion
+        note = NOTE_GRID[thumb_dir][move_dir]
+        gesture_state["current_note"] = note
+        gesture_state["current_quality"] = chord_quality
+
+        chord_tuple = (note, chord_quality)
+
+        # only retrigger when note or quality changes
+        if gesture_state["last_played"] != chord_tuple:
+            play_chord(note, chord_quality)
+            gesture_state["last_played"] = chord_tuple
+
+        gesture_state["debug_text"] = f"SELECT {thumb_dir} + {move_dir} -> {note} {chord_quality}"
+        gesture_state["prev_thumb_out"] = thumb_out
+
+        return {
+            "action": "selecting",
+            "locked": False,
+            "thumb_dir": thumb_dir,
+            "move_dir": move_dir,
+            "note": note,
+            "quality": chord_quality
+        }
+
+    # -----------------------------------------------------
+    # 7. Fallback idle
+    # -----------------------------------------------------
+    gesture_state["mode"] = "IDLE"
+    gesture_state["locked"] = False
+    gesture_state["selection_anchor"] = None
+    gesture_state["selection_thumb_dir"] = None
+    gesture_state["debug_text"] = "IDLE"
     gesture_state["prev_thumb_out"] = thumb_out
+
+    return {
+        "action": "idle",
+        "locked": False,
+        "note": gesture_state["current_note"],
+        "quality": gesture_state["current_quality"]
+    }
