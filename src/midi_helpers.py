@@ -98,26 +98,25 @@ def send_cc(cc_number: int, cc_value: int, channel: int = 0):
     """Send a MIDI CC message."""
     if midi_out is None:
         return
-    midi_out.send_message([0xB0 | channel, cc_number, cc_value])
+    midi_out.send(mido.Message('control_change', channel=channel, control=cc_number, value=cc_value))
 
 def send_note_on(midi_note: int, velocity: int = 100, channel: int = 0):
     """Send a MIDI Note On message."""
     if midi_out is None:
         return
-    midi_out.send_message([0x90 | channel, midi_note, velocity])
+    midi_out.send(mido.Message('note_on', channel=channel, note=midi_note, velocity=velocity))
 
 def send_note_off(midi_note: int, channel: int = 0):
     """Send a MIDI Note Off message."""
     if midi_out is None:
         return
-    midi_out.send_message([0x80 | channel, midi_note, 0])
+    midi_out.send(mido.Message('note_off', channel=channel, note=midi_note, velocity=0)) 
 
 def send_all_notes_off(channel: int = 0):
     """Send MIDI CC 123 — All Notes Off."""
     if midi_out is None:
         return
-    midi_out.send_message([0xB0 | channel, 123, 0])
-
+    midi_out.send(mido.Message('control_change', channel=channel, control=123, value=0))
 
 # ─── Gesture → MIDI ───────────────────────────────────────────────────────────
 
