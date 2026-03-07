@@ -13,7 +13,7 @@ def handle_gesture():
 def gesture_to_note():
 
 
-def note_to_midi():
+def note_to_midi(note):
 
 
 def parameter_to_midi():
