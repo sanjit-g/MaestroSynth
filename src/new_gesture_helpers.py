@@ -82,7 +82,7 @@ def play_chord(root_note, chord_quality):
     print(f"PLAY -> {root_note} {chord_quality}")
 
 def stop_chord():
-    #stop_current_chord()
+    stop_current_chord()
     print("STOP")
 
 def handle_gesture(landmarks, selector_center=(0.5, 0.5)):
