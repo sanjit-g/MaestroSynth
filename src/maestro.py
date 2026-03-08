@@ -6,7 +6,8 @@ import urllib.request
 import os
 
 from midi_helpers import init_midi, close_midi
-from gesture_helpers import draw_landmarks, draw_hud, handle_gesture
+from gesture_helpers import draw_landmarks, draw_hud
+from new_gesture_helpers import handle_gesture
 
 
 MODEL_PATH = "hand_landmarker.task"
