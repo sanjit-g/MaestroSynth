@@ -14,6 +14,9 @@ CHORD_QUALITY_MAP = {
 }
 
 gesture_state = {
+    "candidate_note": None,
+    "candidate_quality": "major",
+    "candidate_frames": 0,
     "current_note":    None,
     "current_quality": "major",
     "last_played":     None,
@@ -204,12 +207,20 @@ def handle_gesture(landmarks, selector_center=(0.5, 0.5)):
         }
 
     # ── Normal note selection ─────────────────────────────────────────────────
-    gesture_state["current_note"]    = note
-    gesture_state["current_quality"] = quality
-    chord_tuple = (note, quality)
-    if gesture_state["last_played"] != chord_tuple:
-        play_chord(note, quality)
-        gesture_state["last_played"] = chord_tuple
+    candidate = (note, quality)
+    current_candidate = (gesture_state["candidate_note"], gesture_state["candidate_quality"])
+
+    if candidate == current_candidate:
+        gesture_state["candidate_frames"] += 1
+    else:
+        gesture_state["candidate_note"] = note
+        gesture_state["candidate_quality"] = quality
+        gesture_state["candidate_frames"] = 1
+
+    # require a few consecutive frames before committing
+    if gesture_state["candidate_frames"] >= 3:
+        gesture_state["current_note"] = note
+        gesture_state["current_quality"] = quality
     gesture_state["debug_text"] = f"{note} {quality} angle={angle_deg:.1f}"
     return {
         "action": "selecting", "note": note, "quality": quality,

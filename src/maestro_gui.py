@@ -9,10 +9,11 @@ from mediapipe.tasks.python import vision
 import tkinter as tk
 import urllib.request
 import os
-from midi_helpers import init_midi, close_midi, gesture_to_note
+from midi_helpers import init_midi, close_midi, play_chord_state
 from gesture_helpers import draw_landmarks, draw_hud
 from new_gesture_helpers import handle_gesture
 from gui import CircleOfFifthsRing
+
 
 MODEL_PATH = "hand_landmarker.task"
 MODEL_URL = (
@@ -103,26 +104,22 @@ def main():
         locked  = gesture_result.get("locked", False)
 
         if action == "stop":
-            # Fist — silence everything and clear GUI
-            gesture_to_note("stop", "stop")
+            play_chord_state("stop", "stop")
             app.update_from_note(None)
             app.update_lock_state(False)
 
         elif action in ("locked", "holding_locked"):
-            # Thumb up / holding lock — keep playing the locked chord
-            gesture_to_note(note, quality)
+            play_chord_state(note, quality)
             app.update_from_note(note)
             app.update_lock_state(True)
 
         elif action == "unlocked":
-            # Thumb down — release lock, silence MIDI
-            gesture_to_note("stop", "stop")
+            play_chord_state("stop", "stop")
             app.update_from_note(note)
             app.update_lock_state(False)
 
         elif action == "selecting":
-            # Normal note selection — play chord and update GUI
-            gesture_to_note(note, quality)
+            play_chord_state(note, quality)
             app.update_from_note(note)
             app.update_lock_state(False)
 

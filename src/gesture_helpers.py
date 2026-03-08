@@ -1,6 +1,6 @@
 import math
 import cv2
-from midi_helpers import gesture_to_note
+#from midi_helpers import gesture_to_note
 
 # ─── Note Grid & Chord Maps ───────────────────────────────────────────────────
 
