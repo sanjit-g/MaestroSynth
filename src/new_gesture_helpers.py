@@ -18,6 +18,9 @@ gesture_state = {
     "current_quality": "major",
     "last_played": None,
     "debug_text": "",
+    "locked_note": None,
+    "locked_quality": "major",
+    "is_locked": False,
 }
 
 def dist3(a, b):
@@ -159,3 +162,28 @@ def handle_gesture(landmarks, selector_center=(0.5, 0.5)):
         "angle_deg": angle_deg,
         "radius": radius,
     }
+def is_thumbs_up(lm):
+    """Detect thumbs up gesture: thumb extended, all other fingers curled"""
+    thumb_out = thumb_is_out(lm)
+    index_on = finger_extended(lm, 8, 6)
+    middle_on = finger_extended(lm, 12, 10)
+    ring_on = finger_extended(lm, 16, 14)
+    pinky_on = finger_extended(lm, 20, 18)
+    
+    return thumb_out and not index_on and not middle_on and not ring_on and not pinky_on
+
+def is_thumbs_down(lm):
+    """Detect thumbs down gesture: thumb extended downward, all other fingers curled"""
+    thumb_tip = lm[4]
+    thumb_mcp = lm[2]
+    
+    # Thumb is pointing down if tip Y is greater than MCP Y (screen coordinates)
+    thumb_pointing_down = thumb_tip.y > thumb_mcp.y
+    
+    thumb_out = thumb_is_out(lm)
+    index_on = finger_extended(lm, 8, 6)
+    middle_on = finger_extended(lm, 12, 10)
+    ring_on = finger_extended(lm, 16, 14)
+    pinky_on = finger_extended(lm, 20, 18)
+    
+    return thumb_out and thumb_pointing_down and not index_on and not middle_on and not ring_on and not pinky_on
