@@ -1,5 +1,5 @@
 import math
-
+from midi_helpers import stop_current_chord
 CIRCLE_OF_FIFTHS = [
     "C", "G", "D", "A", "E", "B",
     "Gb", "Db", "Ab", "Eb", "Bb", "F"
@@ -14,9 +14,6 @@ CHORD_QUALITY_MAP = {
 }
 
 gesture_state = {
-    "candidate_note": None,
-    "candidate_quality": "major",
-    "candidate_frames": 0,
     "current_note":    None,
     "current_quality": "major",
     "last_played":     None,
@@ -24,8 +21,11 @@ gesture_state = {
     "locked_note":     None,
     "locked_quality":  "major",
     "is_locked":       False,
-    # Debounce flags — track previous frame state so we only
-    # trigger on the RISING EDGE of each gesture, not every frame.
+    # Candidate stability (new)
+    "candidate_note":    None,
+    "candidate_quality": "major",
+    "candidate_frames":  0,
+    # Debounce flags
     "_prev_thumbs_up":   False,
     "_prev_thumbs_down": False,
 }
@@ -124,6 +124,7 @@ def play_chord(root_note, chord_quality):
 
 
 def stop_chord():
+    #stop_current_chord()
     print("STOP")
 
 
@@ -135,28 +136,30 @@ def handle_gesture(landmarks, selector_center=(0.5, 0.5)):
     note, radius, angle_deg = gesture_to_note_by_angle(
         palm_xy, center_xy=selector_center, deadzone=0.08)
 
-    # ── Detect gesture edges (rising edge only, not held state) ──────────────
+    # ── Detect gesture edges (rising edge only) ──────────────────────────────
     thumbs_up_now   = is_thumbs_up(landmarks)
     thumbs_down_now = is_thumbs_down(landmarks)
 
-    # Rising edge: gesture just became true this frame
     thumbs_up_triggered   = thumbs_up_now   and not gesture_state["_prev_thumbs_up"]
     thumbs_down_triggered = thumbs_down_now and not gesture_state["_prev_thumbs_down"]
 
-    # Always update previous state before any early returns
+    # Update previous state before any early returns
     gesture_state["_prev_thumbs_up"]   = thumbs_up_now
     gesture_state["_prev_thumbs_down"] = thumbs_down_now
 
-    # ── Stop: fist near centre ────────────────────────────────────────────────
-    if note is None and is_fist(landmarks):
+    # ── STOP: fist anywhere (clear lock, stop sound) ─────────────────────────
+    if is_fist(landmarks):
         stop_chord()
         gesture_state.update({
-            "current_note":    None,
-            "current_quality": "major",
-            "last_played":     None,
-            "locked_note":     None,
-            "is_locked":       False,
-            "debug_text":      "STOP",
+            "current_note":     None,
+            "current_quality":  "major",
+            "last_played":      None,
+            "locked_note":      None,
+            "is_locked":        False,
+            "candidate_note":   None,
+            "candidate_quality": "major",
+            "candidate_frames": 0,
+            "debug_text":       "STOP",
         })
         return {
             "action": "stop", "note": None, "quality": None,
@@ -170,7 +173,8 @@ def handle_gesture(landmarks, selector_center=(0.5, 0.5)):
         gesture_state["locked_quality"] = "major"
         gesture_state["debug_text"]    = "UNLOCKED"
         return {
-            "action": "unlocked", "note": gesture_state["current_note"],
+            "action": "unlocked",
+            "note":   gesture_state["current_note"],
             "quality": quality, "locked": False,
             "angle_deg": angle_deg, "radius": radius,
         }
@@ -192,37 +196,51 @@ def handle_gesture(landmarks, selector_center=(0.5, 0.5)):
         gesture_state["debug_text"]    = f"LOCKED {gesture_state['locked_note']} {gesture_state['locked_quality']}"
         return {
             "action": "locked",
-            "note":    gesture_state["locked_note"],
+            "note":   gesture_state["locked_note"],
             "quality": gesture_state["locked_quality"],
-            "locked":  True, "angle_deg": angle_deg, "radius": radius,
+            "locked": True, "angle_deg": angle_deg, "radius": radius,
         }
 
     # ── Deadzone / centre ─────────────────────────────────────────────────────
     if note is None:
         gesture_state["debug_text"] = "CENTER / DEADZONE"
         return {
-            "action": "idle_center", "note": gesture_state["current_note"],
+            "action": "idle_center",
+            "note":   gesture_state["current_note"],
             "quality": quality, "locked": False,
             "angle_deg": angle_deg, "radius": radius,
         }
 
-    # ── Normal note selection ─────────────────────────────────────────────────
+    # ── Normal note selection with candidate stability ───────────────────────
+    # candidate: the note we are currently considering
     candidate = (note, quality)
     current_candidate = (gesture_state["candidate_note"], gesture_state["candidate_quality"])
 
     if candidate == current_candidate:
         gesture_state["candidate_frames"] += 1
     else:
-        gesture_state["candidate_note"] = note
+        gesture_state["candidate_note"]   = note
         gesture_state["candidate_quality"] = quality
-        gesture_state["candidate_frames"] = 1
+        gesture_state["candidate_frames"]  = 1
 
-    # require a few consecutive frames before committing
+    # Require 3 consecutive frames before committing
     if gesture_state["candidate_frames"] >= 3:
-        gesture_state["current_note"] = note
+        gesture_state["current_note"]    = note
         gesture_state["current_quality"] = quality
+
+    # Play chord only if the committed note/quality changed
+    chord_tuple = (gesture_state["current_note"], gesture_state["current_quality"])
+    if (gesture_state["current_note"] is not None and
+        gesture_state["last_played"] != chord_tuple):
+        play_chord(gesture_state["current_note"], gesture_state["current_quality"])
+        gesture_state["last_played"] = chord_tuple
+
     gesture_state["debug_text"] = f"{note} {quality} angle={angle_deg:.1f}"
     return {
-        "action": "selecting", "note": note, "quality": quality,
-        "locked": False, "angle_deg": angle_deg, "radius": radius,
+        "action": "selecting",
+        "note":   note,           # return raw note (not necessarily committed)
+        "quality": quality,
+        "locked": False,
+        "angle_deg": angle_deg,
+        "radius": radius,
     }
