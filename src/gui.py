@@ -54,12 +54,19 @@ class CircleOfFifthsRing:
         # Create the ring
         self.create_ring()
         
+        # Center display for selected note (ON CANVAS, at center)
+        self.center_note_text = self.canvas.create_text(
+        300, 300,                     # x, y = center of 600x600 canvas
+        text="C",
+        fill='white',
+    font=('Arial', 32, 'bold')
+)
         # Center display for selected note
-        self.center_display = tk.Label(root, text="", 
-                                       font=('Arial', 24, 'bold'),
-                                       fg=self.colors['note_highlight'],
-                                       bg=self.colors['bg'])
-        self.center_display.pack(pady=10)
+        #self.center_display = tk.Label(root, text="", 
+        #                               font=('Arial', 24, 'bold'),
+         #                              fg=self.colors['note_highlight'],
+         #                              bg=self.colors['bg'])
+        #self.center_display.pack(pady=10)
         
     def create_ring(self):
         """Create the circle of fifths ring with quadrants"""
@@ -67,7 +74,7 @@ class CircleOfFifthsRing:
         outer_radius = 250
         inner_radius = 150  # Creates a ring instead of full circle
         note_radius = 30
-        second_outer_radius = 275
+        second_outer_radius = 290
         
         # Draw the ring background (dark circle)
         self.canvas.create_oval(center_x-outer_radius, center_y-outer_radius,
@@ -96,9 +103,8 @@ class CircleOfFifthsRing:
             # Arc from inner to second outer radius
             for angle in range(start_angle, end_angle + 1):
                 rad = math.radians(angle)
-                outer_radius = second_outer_radius
-                x = center_x + outer_radius * math.cos(rad)
-                y = center_y + outer_radius * math.sin(rad)
+                x = center_x + second_outer_radius * math.cos(rad)
+                y = center_y + second_outer_radius * math.sin(rad)
                 points.append((x, y))
             for angle in range(end_angle, start_angle - 1, -1):
                 rad = math.radians(angle)
@@ -114,7 +120,7 @@ class CircleOfFifthsRing:
             # Create polygon (invisible by default)
             poly = self.canvas.create_polygon(flat_points,
                                              fill=quad_data['color'],
-                                             stipple='gray50',  # Creates transparency effect
+                                             #stipple='gray75',  # Creates transparency effect
                                              outline='',
                                              state='hidden')  # Hidden by default
             self.quadrant_objects[quad_name] = poly
