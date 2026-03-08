@@ -11,7 +11,7 @@ import urllib.request
 import os
 from midi_helpers import init_midi, close_midi, play_chord_state
 from gesture_helpers import draw_landmarks, draw_hud
-from new_gesture_helpers import handle_gesture
+from new_gesture_helpers import handle_gesture, gesture_state
 from gui import CircleOfFifthsRing
 
 
@@ -94,9 +94,21 @@ def main():
             app.update_hand_position(hand_x, hand_y, frame_w, frame_h)
 
         else:
-            gesture_result = {"action": "idle", "note": None, "quality": None, "locked": False}
-            app.clear_selection()
-
+            # No hand detected – if locked, keep showing the locked chord on the GUI
+            if gesture_state["is_locked"] and gesture_state["locked_note"]:
+                app.update_from_note(gesture_state["locked_note"])
+                app.update_lock_state(True)
+                gesture_result = {
+                    "action": "holding_locked",
+                    "note":   gesture_state["locked_note"],
+                    "quality": gesture_state["locked_quality"],
+                    "locked": True,
+                    "angle_deg": None,
+                    "radius": None,
+                }
+            else:
+                app.clear_selection()
+                gesture_result = {"action": "idle", "note": None, "quality": None, "locked": False}
         # ── Handle all action states ──────────────────────────────────────────
         action  = gesture_result.get("action")
         note    = gesture_result.get("note")
