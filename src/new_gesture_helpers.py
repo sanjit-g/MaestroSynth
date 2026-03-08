@@ -124,7 +124,7 @@ def play_chord(root_note, chord_quality):
 
 
 def stop_chord():
-    #stop_current_chord()
+    stop_current_chord()
     print("STOP")
 
 
