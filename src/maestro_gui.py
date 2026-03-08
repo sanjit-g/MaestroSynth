@@ -9,8 +9,7 @@ from mediapipe.tasks.python import vision
 import tkinter as tk
 import urllib.request
 import os
-
-from midi_helpers import init_midi, close_midi
+from midi_helpers import init_midi, close_midi, gesture_to_note
 from gesture_helpers import draw_landmarks, draw_hud
 from new_gesture_helpers import handle_gesture
 from gui import CircleOfFifthsRing
@@ -21,9 +20,8 @@ MODEL_URL = (
     "hand_landmarker/float16/latest/hand_landmarker.task"
 )
 
-
 def _ensure_model():
-    """Download the hand landmarker model if missing. Exit with a clear message on failure."""
+    """Download the hand landmarker model if missing."""
     if os.path.exists(MODEL_PATH):
         return
     print("Downloading hand landmarker model...")
@@ -35,9 +33,7 @@ def _ensure_model():
         print("Check your network connection and try again, or place hand_landmarker.task in this directory.")
         raise SystemExit(1) from e
 
-
 _ensure_model()
-
 
 def main():
     root = tk.Tk()
@@ -47,13 +43,10 @@ def main():
     root.minsize(400, 300)
     root.resizable(True, True)
 
-    # Build GUI with camera as background (single window: ring overlaid on camera)
     app = CircleOfFifthsRing(root, camera_overlay=True)
 
-    # MIDI
     midi_port_name = init_midi()
 
-    # Hand detector
     options = vision.HandLandmarkerOptions(
         base_options=python.BaseOptions(model_asset_path=MODEL_PATH),
         num_hands=1,
@@ -69,45 +62,78 @@ def main():
         return
 
     print("Camera open. Press Q or close the window to quit.\n")
-    running = [True]  # use list so inner function can rebind
+    running = [True]
 
     def process_frame():
         if not running[0]:
             return
+
         ret, frame = cap.read()
         if not ret:
             root.after(10, process_frame)
             return
 
+        # Flip once — all downstream coords are in correct physical space
         frame = cv2.flip(frame, 1)
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame_h, frame_w = frame.shape[:2]
+
+        rgb      = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mediapipe.Image(image_format=mediapipe.ImageFormat.SRGB, data=rgb)
-        result = detector.detect(mp_image)
+        result   = detector.detect(mp_image)
 
         if result.hand_landmarks:
-            landmarks = result.hand_landmarks[0]
+            landmarks      = result.hand_landmarks[0]
             draw_landmarks(frame, landmarks)
             gesture_result = handle_gesture(landmarks)
-        else:
-            gesture_result = {"action": "idle", "note": None, "quality": None}
 
-        # Update GUI with detected note and lock state (only when we have hand data or on stop)
-        note = gesture_result.get("note")
-        locked = gesture_result.get("locked", False)
-        if gesture_result.get("action") == "stop":
+            # Drive zone overlay with wrist position
+            wrist  = landmarks[0]
+            hand_x = wrist.x * frame_w
+            hand_y = wrist.y * frame_h
+            app.update_hand_position(hand_x, hand_y, frame_w, frame_h)
+
+        else:
+            gesture_result = {"action": "idle", "note": None, "quality": None, "locked": False}
+            app.clear_selection()
+
+        # ── Handle all action states ──────────────────────────────────────────
+        action  = gesture_result.get("action")
+        note    = gesture_result.get("note")
+        quality = gesture_result.get("quality") or "major"
+        locked  = gesture_result.get("locked", False)
+
+        if action == "stop":
+            # Fist — silence everything and clear GUI
+            gesture_to_note("stop", "stop")
             app.update_from_note(None)
             app.update_lock_state(False)
-        else:
+
+        elif action in ("locked", "holding_locked"):
+            # Thumb up / holding lock — keep playing the locked chord
+            gesture_to_note(note, quality)
             app.update_from_note(note)
-            if result.hand_landmarks:
-                app.update_lock_state(locked)
+            app.update_lock_state(True)
+
+        elif action == "unlocked":
+            # Thumb down — release lock, silence MIDI
+            gesture_to_note("stop", "stop")
+            app.update_from_note(note)
+            app.update_lock_state(False)
+
+        elif action == "selecting":
+            # Normal note selection — play chord and update GUI
+            gesture_to_note(note, quality)
+            app.update_from_note(note)
+            app.update_lock_state(False)
+
+        elif action == "idle_center":
+            # Hand near centre deadzone — don't change anything
+            pass
 
         draw_hud(frame, gesture_result, midi_port_name)
         app.update_background(frame)
-
         root.after(1, process_frame)
 
-    # Start camera loop (driven by tkinter)
     root.after(100, process_frame)
 
     def on_closing():
@@ -121,7 +147,6 @@ def main():
     root.bind("<KeyPress-q>", lambda e: on_closing())
     root.focus_set()
     root.mainloop()
-
 
 if __name__ == "__main__":
     main()
