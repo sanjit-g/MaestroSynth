@@ -20,7 +20,12 @@ def init_midi() -> str:
     """
     global midi_out
 
-    ports = mido.get_output_names()
+    try:
+        ports = mido.get_output_names()
+    except Exception:
+        # e.g. rtmidi not installed on Windows, or no MIDI backend
+        print("\nMIDI backend unavailable — running without MIDI (no MIDI sent)\n")
+        return "No MIDI device"
     print("\nAvailable MIDI output ports:")
     for i, p in enumerate(ports):
         print(f"  [{i}] {p}")

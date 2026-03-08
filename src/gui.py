@@ -2,8 +2,11 @@ import tkinter as tk
 import math
 
 class CircleOfFifthsRing:
-    def __init__(self, root):
+    def __init__(self, root, camera_overlay=False):
         self.root = root
+        self._camera_overlay = camera_overlay
+        self._current_photo = None
+        self._bg_image_id = None
         
         # Colors
         self.colors = {
@@ -23,7 +26,7 @@ class CircleOfFifthsRing:
         
         # Notes in circle of fifths order (clockwise from top)
         self.notes = ['C', 'G', 'D', 'A', 'E', 'B', 
-                      'F#', 'C#', 'G#', 'D#', 'A#', 'F']
+                      'Gb', 'Db', 'Ab', 'Eb', 'Bb', 'F']
         
         # Quadrant mapping
         self.quadrants = {
@@ -33,11 +36,11 @@ class CircleOfFifthsRing:
             'left': {'notes': ['D#', 'A#', 'F'], 'color': '#f54242', 'start_idx': 9}
         }
         
-        # Hand movement to note position mapping
+        # Hand movement to note position mapping (mirrored: left↔right vs ring)
         self.hand_to_position = {
-            'left': 0,    # First note in quadrant
+            'left': 2,    # Third note in quadrant (right side of ring)
             'up': 1,      # Second note in quadrant
-            'right': 2    # Third note in quadrant
+            'right': 0    # First note in quadrant (left side of ring)
         }
         
         # Current state
@@ -50,23 +53,30 @@ class CircleOfFifthsRing:
         self.canvas = tk.Canvas(root, width=600, height=600, 
                                 bg=self.colors['bg'], highlightthickness=0)
         self.canvas.pack(pady=20)
-        
+
+        # Optional: camera as background (image item at back, ring drawn on top)
+        if self._camera_overlay:
+            try:
+                from PIL import Image, ImageTk
+                import numpy as np
+                placeholder = Image.fromarray(np.zeros((600, 600, 3), dtype=np.uint8))
+                self._current_photo = ImageTk.PhotoImage(placeholder)
+                self._bg_image_id = self.canvas.create_image(
+                    300, 300, image=self._current_photo, anchor=tk.CENTER
+                )
+            except ImportError:
+                self._camera_overlay = False
+
         # Create the ring
         self.create_ring()
         
         # Center display for selected note (ON CANVAS, at center)
         self.center_note_text = self.canvas.create_text(
-        300, 300,                     # x, y = center of 600x600 canvas
-        text="C",
-        fill='white',
-    font=('Arial', 32, 'bold')
-)
-        # Center display for selected note
-        #self.center_display = tk.Label(root, text="", 
-        #                               font=('Arial', 24, 'bold'),
-         #                              fg=self.colors['note_highlight'],
-         #                              bg=self.colors['bg'])
-        #self.center_display.pack(pady=10)
+            300, 300,
+            text="",
+            fill=self.colors['note_highlight'],
+            font=('Arial', 32, 'bold')
+        )
         
     def create_ring(self):
         """Create the circle of fifths ring with quadrants"""
@@ -162,7 +172,7 @@ class CircleOfFifthsRing:
             if self.current_note:
                 self.highlight_note(self.current_note, False)
                 self.current_note = None
-                self.center_display.config(text="")
+                self.canvas.itemconfig(self.center_note_text, text="")
     
     def update_hand(self, hand_movement):
         """Call this when hand movement changes"""
@@ -183,8 +193,26 @@ class CircleOfFifthsRing:
                 
                 self.highlight_note(selected_note, True)
                 self.current_note = selected_note
-                self.center_display.config(text=selected_note)
+                self.canvas.itemconfig(self.center_note_text, text=selected_note)
     
+    def update_background(self, cv2_frame):
+        """
+        Update the canvas background with a camera frame (BGR numpy array).
+        Only has effect when the GUI was created with camera_overlay=True.
+        Frame is resized to 600x600 and drawn behind the ring.
+        """
+        if not self._camera_overlay or self._bg_image_id is None:
+            return
+        try:
+            from PIL import Image, ImageTk
+            import cv2
+            frame = cv2.resize(cv2_frame, (600, 600))
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            self._current_photo = ImageTk.PhotoImage(Image.fromarray(rgb))
+            self.canvas.itemconfig(self._bg_image_id, image=self._current_photo)
+        except Exception:
+            pass
+
     def highlight_note(self, note_name, highlight=True):
         """Helper to highlight/unhighlight a note"""
         if note_name in self.note_objects:
@@ -197,6 +225,44 @@ class CircleOfFifthsRing:
         self.update_thumb(thumb_direction)
         # Small delay to ensure visual separation (optional)
         self.root.after(50, lambda: self.update_hand(hand_movement))
+
+    # Note name equivalence: gesture systems may use flats (Gb) vs sharps (F#)
+    _NOTE_ALIASES = {'Gb': 'F#', 'Db': 'C#', 'Ab': 'G#', 'Eb': 'D#', 'Bb': 'A#'}
+
+    def update_from_note(self, note):
+        """
+        Update the GUI from a detected note (e.g. from gesture/camera).
+        Call this when maestro/gesture system detects a note.
+        Accepts both sharp (F#) and flat (Gb) notation.
+        """
+        if note is None or note == '':
+            # Clear selection
+            for quad_name, poly in self.quadrant_objects.items():
+                self.canvas.itemconfig(poly, state='hidden')
+            if self.current_note:
+                self.highlight_note(self.current_note, False)
+            self.current_quadrant = None
+            self.current_note = None
+            self.canvas.itemconfig(self.center_note_text, text='')
+            return
+
+        # Normalize flat -> sharp to match GUI note labels
+        note = self._NOTE_ALIASES.get(note, note)
+        if note not in self.note_objects:
+            return
+
+        # Find quadrant and position for this note
+        for quad_name, quad_data in self.quadrants.items():
+            if note in quad_data['notes']:
+                pos = quad_data['notes'].index(note)
+                hand_movement = next(
+                    (m for m, p in self.hand_to_position.items() if p == pos),
+                    None
+                )
+                if hand_movement is not None:
+                    self.update_thumb(quad_name)
+                    self.update_hand(hand_movement)
+                break
 
 # Test the GUI
 if __name__ == "__main__":
