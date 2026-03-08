@@ -78,7 +78,7 @@ def gesture_to_note_by_angle(hand_xy, center_xy=(0.5, 0.5), deadzone=0.08):
     hx, hy = hand_xy
     cx, cy = center_xy
 
-    dx = hx - cx
+    dx = -(hx - cx)
     dy = hy - cy
 
     radius = math.sqrt(dx*dx + dy*dy)
@@ -119,17 +119,64 @@ def handle_gesture(landmarks, selector_center=(0.5, 0.5)):
         deadzone=0.08
     )
 
-    # stop gesture: fist near center
+    # stop gesture: fist near center — also clears lock
     if note is None and is_fist(landmarks):
         stop_chord()
         gesture_state["current_note"] = None
         gesture_state["current_quality"] = "major"
         gesture_state["last_played"] = None
+        gesture_state["locked_note"] = None
+        gesture_state["is_locked"] = False
         gesture_state["debug_text"] = "STOP"
         return {
             "action": "stop",
             "note": None,
             "quality": None,
+            "locked": False,
+            "angle_deg": angle_deg,
+            "radius": radius,
+        }
+
+    # Thumbs down = UNLOCK (release the held chord)
+    if gesture_state["is_locked"] and is_thumbs_down(landmarks):
+        gesture_state["is_locked"] = False
+        gesture_state["locked_note"] = None
+        gesture_state["locked_quality"] = "major"
+        gesture_state["debug_text"] = "UNLOCKED"
+        return {
+            "action": "unlocked",
+            "note": gesture_state["current_note"],
+            "quality": quality,
+            "locked": False,
+            "angle_deg": angle_deg,
+            "radius": radius,
+        }
+
+    # While locked, keep holding the locked chord (ignore new hand position)
+    if gesture_state["is_locked"]:
+        ln = gesture_state["locked_note"]
+        lq = gesture_state["locked_quality"]
+        gesture_state["debug_text"] = f"LOCKED {ln} {lq}"
+        return {
+            "action": "holding_locked",
+            "note": ln,
+            "quality": lq,
+            "locked": True,
+            "angle_deg": angle_deg,
+            "radius": radius,
+        }
+
+    # Thumbs up = LOCK (hold current note/chord)
+    if is_thumbs_up(landmarks) and gesture_state["current_note"] is not None:
+        gesture_state["is_locked"] = True
+        gesture_state["locked_note"] = gesture_state["current_note"]
+        gesture_state["locked_quality"] = gesture_state["current_quality"]
+        gesture_state["debug_text"] = f"LOCKED {gesture_state['locked_note']} {gesture_state['locked_quality']}"
+        return {
+            "action": "locked",
+            "note": gesture_state["locked_note"],
+            "quality": gesture_state["locked_quality"],
+            "locked": True,
             "angle_deg": angle_deg,
             "radius": radius,
         }
@@ -141,6 +188,7 @@ def handle_gesture(landmarks, selector_center=(0.5, 0.5)):
             "action": "idle_center",
             "note": gesture_state["current_note"],
             "quality": quality,
+            "locked": False,
             "angle_deg": angle_deg,
             "radius": radius,
         }
@@ -159,6 +207,7 @@ def handle_gesture(landmarks, selector_center=(0.5, 0.5)):
         "action": "selecting",
         "note": note,
         "quality": quality,
+        "locked": False,
         "angle_deg": angle_deg,
         "radius": radius,
     }
@@ -172,18 +221,24 @@ def is_thumbs_up(lm):
     
     return thumb_out and not index_on and not middle_on and not ring_on and not pinky_on
 
-def is_thumbs_down(lm):
-    """Detect thumbs down gesture: thumb extended downward, all other fingers curled"""
+def is_thumbs_down(lm, y_margin=0.015):
+    """
+    Detect thumbs down: thumb pointing downward, all other fingers curled.
+    Does NOT require thumb_is_out so a curled thumbs-down still unlocks.
+    Uses both tip-below-MCP and tip-below-wrist so it fires in more orientations.
+    """
     thumb_tip = lm[4]
     thumb_mcp = lm[2]
-    
-    # Thumb is pointing down if tip Y is greater than MCP Y (screen coordinates)
-    thumb_pointing_down = thumb_tip.y > thumb_mcp.y
-    
-    thumb_out = thumb_is_out(lm)
+    wrist = lm[0]
+    # Image Y increases downward. Thumb down = tip below base and/or below wrist.
+    tip_below_mcp = thumb_tip.y > thumb_mcp.y + y_margin
+    tip_below_wrist = thumb_tip.y > wrist.y + y_margin
+    thumb_pointing_down = tip_below_mcp or tip_below_wrist
+
     index_on = finger_extended(lm, 8, 6)
     middle_on = finger_extended(lm, 12, 10)
     ring_on = finger_extended(lm, 16, 14)
     pinky_on = finger_extended(lm, 20, 18)
-    
-    return thumb_out and thumb_pointing_down and not index_on and not middle_on and not ring_on and not pinky_on
+    fingers_curled = not index_on and not middle_on and not ring_on and not pinky_on
+
+    return thumb_pointing_down and fingers_curled

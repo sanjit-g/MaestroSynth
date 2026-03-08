@@ -56,10 +56,11 @@ class CircleOfFifthsRing:
         self.quadrant_objects = {}
         self.note_objects     = {}
 
-        # ── Camera canvas (fills the whole window) ────────────────────────────
+        # ── Camera canvas (fills the whole window; resizes with window) ───────
         self.cam_canvas = tk.Canvas(root, width=CAM_W, height=CAM_H,
                                     bg='#000000', highlightthickness=0)
-        self.cam_canvas.place(x=0, y=0)
+        self.cam_canvas.place(x=0, y=0, relwidth=1, relheight=1)
+        self._display_w, self._display_h = CAM_W, CAM_H
 
         if self._camera_overlay:
             try:
@@ -74,15 +75,14 @@ class CircleOfFifthsRing:
             except ImportError:
                 self._camera_overlay = False
 
-        # ── Wheel canvas (top-right corner overlay) ───────────────────────────
-        wx = CAM_W - WHEEL_SIZE - WHEEL_PAD
-        wy = WHEEL_PAD
+        # ── Wheel canvas (top-right corner overlay; position updated on resize) ─
         self.canvas = tk.Canvas(root,
                                 width=WHEEL_SIZE, height=WHEEL_SIZE,
                                 bg=self.colors['bg'],
                                 highlightthickness=1,
                                 highlightbackground='#555555')
-        self.canvas.place(x=wx, y=wy)
+        self._place_wheel(CAM_W, CAM_H)
+        self.root.bind("<Configure>", self._on_resize)
 
         self._build_ring()
 
@@ -91,6 +91,32 @@ class CircleOfFifthsRing:
             ws // 2, ws // 2,
             text='', fill=self.colors['note_highlight'],
             font=('Arial', int(ws * 0.12), 'bold'))
+
+        # Lock indicator: visible when chord is locked (thumbs up)
+        self._lock_rect_id = self.canvas.create_rectangle(
+            ws // 2 - 42, ws - 28, ws // 2 + 42, ws - 8,
+            outline='#ffd700', width=2, state='hidden')
+        self._lock_text_id = self.canvas.create_text(
+            ws // 2, ws - 18,
+            text='LOCKED', fill='#ffd700',
+            font=('Arial', 11, 'bold'), state='hidden')
+        self._locked = False
+
+    def _place_wheel(self, w, h):
+        """Position the wheel at top-right of the given dimensions."""
+        wx = w - WHEEL_SIZE - WHEEL_PAD
+        self.canvas.place(x=wx, y=WHEEL_PAD)
+
+    def _on_resize(self, event):
+        """On window resize: reposition wheel and camera image, store display size."""
+        if event.widget != self.root:
+            return
+        w = max(event.width, WHEEL_SIZE + 2 * WHEEL_PAD)
+        h = max(event.height, WHEEL_SIZE + 2 * WHEEL_PAD)
+        self._display_w, self._display_h = w, h
+        self._place_wheel(w, h)
+        if self._camera_overlay and self._cam_image_id is not None:
+            self.cam_canvas.coords(self._cam_image_id, w // 2, h // 2)
 
     # ── Ring construction ─────────────────────────────────────────────────────
 
@@ -204,6 +230,19 @@ class CircleOfFifthsRing:
         self.current_note     = None
         self.canvas.itemconfig(self.center_note_text, text='')
 
+    def update_lock_state(self, locked):
+        """
+        Show or hide the lock indicator on the wheel.
+        Call with True when chord is locked (thumbs up), False when unlocked.
+        """
+        if locked == self._locked:
+            return
+        self._locked = locked
+        state = 'normal' if locked else 'hidden'
+        self.canvas.itemconfig(self._lock_rect_id, state=state)
+        self.canvas.itemconfig(self._lock_text_id, state=state)
+        self.canvas.configure(highlightbackground='#ffd700' if locked else '#555555')
+
     def update_from_note(self, note):
         """
         Highlight a note by name (sharp or flat spelling accepted).
@@ -246,13 +285,18 @@ class CircleOfFifthsRing:
         """
         Render a BGR OpenCV frame onto the main camera canvas.
         Only active when camera_overlay=True was passed to __init__.
+        Resizes frame to current window/canvas size when dynamically resized.
         """
         if not self._camera_overlay or self._cam_image_id is None:
             return
         try:
             from PIL import Image, ImageTk
             import cv2
-            frame = cv2.resize(cv2_frame, (CAM_W, CAM_H))
+            w = self.cam_canvas.winfo_width()
+            h = self.cam_canvas.winfo_height()
+            if w <= 1 or h <= 1:
+                w, h = self._display_w, self._display_h
+            frame = cv2.resize(cv2_frame, (w, h))
             rgb   = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             self._current_photo = ImageTk.PhotoImage(Image.fromarray(rgb))
             self.cam_canvas.itemconfig(self._cam_image_id,

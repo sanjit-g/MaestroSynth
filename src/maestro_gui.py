@@ -43,6 +43,9 @@ def main():
     root = tk.Tk()
     root.title("MaestroSynth - Circle of Fifths")
     root.configure(bg='#1e1e1e')
+    root.geometry("960x540")
+    root.minsize(400, 300)
+    root.resizable(True, True)
 
     # Build GUI with camera as background (single window: ring overlaid on camera)
     app = CircleOfFifthsRing(root, camera_overlay=True)
@@ -88,12 +91,16 @@ def main():
         else:
             gesture_result = {"action": "idle", "note": None, "quality": None}
 
-        # Update GUI with detected note
+        # Update GUI with detected note and lock state (only when we have hand data or on stop)
         note = gesture_result.get("note")
+        locked = gesture_result.get("locked", False)
         if gesture_result.get("action") == "stop":
             app.update_from_note(None)
+            app.update_lock_state(False)
         else:
             app.update_from_note(note)
+            if result.hand_landmarks:
+                app.update_lock_state(locked)
 
         draw_hud(frame, gesture_result, midi_port_name)
         app.update_background(frame)
