@@ -10,8 +10,7 @@ import tkinter as tk
 import urllib.request
 import os
 from midi_helpers import init_midi, close_midi, play_chord_state
-from gesture_helpers import draw_landmarks, draw_hud
-from new_gesture_helpers import handle_gesture
+from new_gesture_helpers import handle_gesture, draw_landmarks, draw_hud
 from gui import CircleOfFifthsRing
 
 

@@ -255,25 +255,6 @@ class CircleOfFifthsRing:
         if note not in self.note_objects:
             return
 
-        # Build a camera-space point that, after the mirror flip inside
-        # update_hand_position, produces the correct wheel angle.
-        #
-        # Ring draws note i at clockwise angle:  theta = i*30 + 15  degrees
-        # update_hand_position computes:         angle = atan2(-dx_cam, -dy)
-        # We want angle == theta, so:
-        #   dx_cam = -r * sin(theta_rad)   (the flip negates it back)
-        #   dy     =  r * cos(theta_rad)  ... wait, atan2(dx,-dy)=theta means
-        #              dx = r*sin(theta), -dy = r*cos(theta) → dy = -r*cos(theta)
-        # But dx = -(x - cx), so x - cx = -dx_cam ... let's be explicit:
-        #
-        #   After flip:  eff_dx = -(x - cx_cam)
-        #   We want atan2(eff_dx, -dy) = theta_rad
-        #     → eff_dx = r * sin(theta_rad)
-        #     → dy     = -r * cos(theta_rad)   [since atan2(eff_dx, -dy)=theta
-        #                                        means -dy = r*cos → dy=-r*cos]
-        #   And eff_dx = -(x - cx_cam) = r*sin → x = cx_cam - r*sin(theta_rad)
-        #   dy = y - cy_cam = -r*cos(theta_rad) → y = cy_cam - r*cos(theta_rad)
-
         idx       = self.notes.index(note)
         theta_rad = math.radians(idx * 30 + 15)
         r         = min(CAM_W, CAM_H) * 0.3
