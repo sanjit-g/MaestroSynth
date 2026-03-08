@@ -11,31 +11,29 @@ MAX_PARAM_INDEX = 7
 midi_out = None  # Set by init_midi()
 
 
-def init_midi() -> str:
+def init_midi(target_name: str = "Maestro 1") -> str:
     """
-    Auto-connect to the first available MIDI output port.
-
-    Returns:
-        str: Name of the connected port, or 'No MIDI device' if none found.
+    Connect to the MIDI output port whose name contains target_name.
     """
     global midi_out
 
     try:
         ports = mido.get_output_names()
-    except Exception:
-        # e.g. rtmidi not installed on Windows, or no MIDI backend
-        print("\nMIDI backend unavailable — running without MIDI (no MIDI sent)\n")
+    except Exception as e:
+        print(f"\nMIDI backend unavailable — running without MIDI: {e}\n")
         return "No MIDI device"
+
     print("\nAvailable MIDI output ports:")
     for i, p in enumerate(ports):
         print(f"  [{i}] {p}")
 
-    if ports:
-        midi_out = mido.open_output(ports[0])
-        print(f"\nConnected to: {ports[0]}\n")
-        return ports[0]
+    for port in ports:
+        if target_name.lower() in port.lower():
+            midi_out = mido.open_output(port)
+            print(f"\nConnected to: {port}\n")
+            return port
 
-    print("\nNo MIDI output found — running in camera-test mode (no MIDI sent)\n")
+    print(f"\nCould not find MIDI port containing '{target_name}'")
     return "No MIDI device"
 
 def close_midi():
