@@ -1,298 +1,296 @@
 import tkinter as tk
 import math
 
-class CircleOfFifthsRing:
-    def __init__(self, root, camera_overlay=False):
-        self.root = root
-        self._camera_overlay = camera_overlay
-        self._current_photo = None
-        self._bg_image_id = None
-        
-        # Colors
-        self.colors = {
-            'bg': '#1e1e1e',
-            'ring': '#333333',
-            'text': '#ffffff',
-            'center_bg': '#2d2d2d',
-            'quadrants': {
-                'up': '#4287f5',     # Blue
-                'right': '#42f54e',   # Green
-                'down': '#f5a442',    # Orange
-                'left': '#f54242'      # Red
-            },
-            'note_highlight': '#ffd700',  # Gold
-            'note_default': '#4a4a4a'
-        }
-        
-        # Notes in circle of fifths order (clockwise from top)
-        self.notes = ['C', 'G', 'D', 'A', 'E', 'B', 
-                      'Gb', 'Db', 'Ab', 'Eb', 'Bb', 'F']
-        
-        # Quadrant mapping
-        self.quadrants = {
-            'up': {'notes': ['C', 'G', 'D'], 'color': '#4287f5', 'start_idx': 0},
-            'right': {'notes': ['A', 'E', 'B'], 'color': '#42f54e', 'start_idx': 3},
-            'down': {'notes': ['F#', 'C#', 'G#'], 'color': '#f5a442', 'start_idx': 6},
-            'left': {'notes': ['D#', 'A#', 'F'], 'color': '#f54242', 'start_idx': 9}
-        }
-        
-        # Hand movement to note position mapping (mirrored: left↔right vs ring)
-        self.hand_to_position = {
-            'left': 2,    # Third note in quadrant (right side of ring)
-            'up': 1,      # Second note in quadrant
-            'right': 0    # First note in quadrant (left side of ring)
-        }
-        
-        # Current state
-        self.current_quadrant = None
-        self.current_note = None
-        self.quadrant_objects = {}  # Store canvas objects for quadrants
-        self.note_objects = {}       # Store canvas objects for notes
-        
-        # Setup canvas
-        self.canvas = tk.Canvas(root, width=600, height=600, 
-                                bg=self.colors['bg'], highlightthickness=0)
-        self.canvas.pack(pady=20)
 
-        # Optional: camera as background (image item at back, ring drawn on top)
+# ── Layout constants ──────────────────────────────────────────────────────────
+CAM_W, CAM_H = 960, 540       # main camera canvas size
+WHEEL_SIZE   = 260             # wheel canvas is a square of this many pixels
+WHEEL_PAD    = 12              # gap from the top-right corner
+
+
+class CircleOfFifthsRing:
+    """
+    Circle-of-fifths overlay widget.
+
+    Layout
+    ──────
+    • A full-window camera canvas is placed at (0, 0).
+    • A compact wheel canvas is overlaid in the top-right corner via place().
+
+    Navigation
+    ──────────
+    Call update_hand_position(x, y) with raw camera-frame pixel coordinates.
+    The x-axis is automatically FLIPPED so that moving your physical hand to
+    the RIGHT highlights the RIGHT side of the wheel (cameras are mirrored).
+    """
+
+    def __init__(self, root, camera_overlay=False):
+        self.root            = root
+        self._camera_overlay = camera_overlay
+        self._current_photo  = None
+        self._cam_image_id   = None
+
+        # ── Colors ────────────────────────────────────────────────────────────
+        self.colors = {
+            'bg':             '#1e1e1e',
+            'ring':           '#444444',
+            'note_highlight': '#ffd700',
+            'note_default':   '#4a4a4a',
+        }
+
+        # ── Notes & quadrants ─────────────────────────────────────────────────
+        # Clockwise from 12 o'clock; all flats for consistency.
+        self.notes = ['C', 'G', 'D', 'A', 'E', 'B',
+                      'Gb', 'Db', 'Ab', 'Eb', 'Bb', 'F']
+
+        self.quadrants = {
+            'up':    {'notes': ['C',  'G',  'D'],  'color': '#4287f5', 'start_idx': 0},
+            'right': {'notes': ['A',  'E',  'B'],  'color': '#42f54e', 'start_idx': 3},
+            'down':  {'notes': ['Gb', 'Db', 'Ab'], 'color': '#f5a442', 'start_idx': 6},
+            'left':  {'notes': ['Eb', 'Bb', 'F'],  'color': '#f54242', 'start_idx': 9},
+        }
+
+        # ── State ─────────────────────────────────────────────────────────────
+        self.current_quadrant = None
+        self.current_note     = None
+        self.quadrant_objects = {}
+        self.note_objects     = {}
+
+        # ── Camera canvas (fills the whole window) ────────────────────────────
+        self.cam_canvas = tk.Canvas(root, width=CAM_W, height=CAM_H,
+                                    bg='#000000', highlightthickness=0)
+        self.cam_canvas.place(x=0, y=0)
+
         if self._camera_overlay:
             try:
                 from PIL import Image, ImageTk
                 import numpy as np
-                placeholder = Image.fromarray(np.zeros((600, 600, 3), dtype=np.uint8))
+                placeholder = Image.fromarray(
+                    np.zeros((CAM_H, CAM_W, 3), dtype=np.uint8))
                 self._current_photo = ImageTk.PhotoImage(placeholder)
-                self._bg_image_id = self.canvas.create_image(
-                    300, 300, image=self._current_photo, anchor=tk.CENTER
-                )
+                self._cam_image_id  = self.cam_canvas.create_image(
+                    CAM_W // 2, CAM_H // 2,
+                    image=self._current_photo, anchor=tk.CENTER)
             except ImportError:
                 self._camera_overlay = False
 
-        # Create the ring
-        self.create_ring()
-        
-        # Center display for selected note (ON CANVAS, at center)
+        # ── Wheel canvas (top-right corner overlay) ───────────────────────────
+        wx = CAM_W - WHEEL_SIZE - WHEEL_PAD
+        wy = WHEEL_PAD
+        self.canvas = tk.Canvas(root,
+                                width=WHEEL_SIZE, height=WHEEL_SIZE,
+                                bg=self.colors['bg'],
+                                highlightthickness=1,
+                                highlightbackground='#555555')
+        self.canvas.place(x=wx, y=wy)
+
+        self._build_ring()
+
+        ws = WHEEL_SIZE
         self.center_note_text = self.canvas.create_text(
-            300, 300,
-            text="",
-            fill=self.colors['note_highlight'],
-            font=('Arial', 32, 'bold')
-        )
-        
-    def create_ring(self):
-        """Create the circle of fifths ring with quadrants"""
-        center_x, center_y = 300, 300
-        outer_radius = 250
-        inner_radius = 150  # Creates a ring instead of full circle
-        note_radius = 30
-        second_outer_radius = 290
-        
-        # Draw the ring background (dark circle)
-        self.canvas.create_oval(center_x-outer_radius, center_y-outer_radius,
-                                center_x+outer_radius, center_y+outer_radius,
-                                outline=self.colors['ring'], width=2)
-        self.canvas.create_oval(center_x-inner_radius, center_y-inner_radius,
-                                center_x+inner_radius, center_y+inner_radius,
-                                outline=self.colors['ring'], width=2)
-        
-        # Draw quadrant dividers (lines from center to outer edge)
-        for angle in [0, 90, 180, 270]:
-            rad = math.radians(angle - 90)  # -90 so 0 degrees is at top
-            x = center_x + outer_radius * math.cos(rad)
-            y = center_y + outer_radius * math.sin(rad)
-            self.canvas.create_line(center_x, center_y, x, y,
-                                   fill=self.colors['ring'], width=1, dash=(2,4))
-        
-        # Create invisible quadrant highlights (will be colored when active)
-        for quad_name, quad_data in self.quadrants.items():
-            # Calculate quadrant angle range
-            start_angle = quad_data['start_idx'] * 30 - 90  # -90 so C is at top
-            end_angle = start_angle + 90
-            
-            # Create quadrant highlight polygon
-            points = []
-            # Arc from inner to second outer radius
-            for angle in range(start_angle, end_angle + 1):
-                rad = math.radians(angle)
-                x = center_x + second_outer_radius * math.cos(rad)
-                y = center_y + second_outer_radius * math.sin(rad)
-                points.append((x, y))
-            for angle in range(end_angle, start_angle - 1, -1):
-                rad = math.radians(angle)
-                x = center_x + inner_radius * math.cos(rad)
-                y = center_y + inner_radius * math.sin(rad)
-                points.append((x, y))
-            
-            # Flatten points list for canvas
-            flat_points = []
-            for point in points:
-                flat_points.extend(point)
-            
-            # Create polygon (invisible by default)
-            poly = self.canvas.create_polygon(flat_points,
-                                             fill=quad_data['color'],
-                                             #stipple='gray75',  # Creates transparency effect
-                                             outline='',
-                                             state='hidden')  # Hidden by default
-            self.quadrant_objects[quad_name] = poly
-        
-        # Draw notes
+            ws // 2, ws // 2,
+            text='', fill=self.colors['note_highlight'],
+            font=('Arial', int(ws * 0.12), 'bold'))
+
+    # ── Ring construction ─────────────────────────────────────────────────────
+
+    def _build_ring(self):
+        ws       = WHEEL_SIZE
+        cx = cy  = ws // 2
+        outer_r  = int(ws * 0.46)
+        inner_r  = int(ws * 0.28)
+        ring_mid = (outer_r + inner_r) / 2
+        note_r   = int(ws * 0.058)
+        hi_r     = int(ws * 0.485)
+
+        for r in (outer_r, inner_r):
+            self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
+                                    outline=self.colors['ring'], width=2)
+
+        for deg in (0, 90, 180, 270):
+            rad = math.radians(deg - 90)
+            self.canvas.create_line(cx, cy,
+                                    cx + outer_r * math.cos(rad),
+                                    cy + outer_r * math.sin(rad),
+                                    fill=self.colors['ring'], width=1, dash=(2, 3))
+
+        for qname, qdata in self.quadrants.items():
+            sa = qdata['start_idx'] * 30 - 90
+            ea = sa + 90
+            pts = []
+            for a in range(sa, ea + 1):
+                r = math.radians(a)
+                pts.append((cx + hi_r    * math.cos(r),
+                             cy + hi_r    * math.sin(r)))
+            for a in range(ea, sa - 1, -1):
+                r = math.radians(a)
+                pts.append((cx + inner_r * math.cos(r),
+                             cy + inner_r * math.sin(r)))
+            flat = [v for pt in pts for v in pt]
+            poly = self.canvas.create_polygon(flat, fill=qdata['color'],
+                                              outline='', state='hidden')
+            self.quadrant_objects[qname] = poly
+
         for i, note in enumerate(self.notes):
-            angle = math.radians(i * 30 - 90 + 15)  # -90 so C is at top
-            x = center_x + ((outer_radius + inner_radius) / 2) * math.cos(angle)
-            y = center_y + ((outer_radius + inner_radius) / 2) * math.sin(angle)
-            
-            # Note background circle
-            circle = self.canvas.create_oval(x-note_radius, y-note_radius,
-                                            x+note_radius, y+note_radius,
-                                            fill=self.colors['note_default'],
-                                            outline='white', width=1)
-            
-            # Note text
-            text = self.canvas.create_text(x, y, text=note,
-                                          fill='white',
-                                          font=('Arial', 14, 'bold'))
-            
-            self.note_objects[note] = {'circle': circle, 'text': text}
-    
-    # ========== PUBLIC METHODS FOR TEAM INTEGRATION ==========
-    
-    def update_thumb(self, thumb_direction):
-        """Call this when thumb direction changes"""
-        # Hide all quadrant highlights
-        for quad_name, poly in self.quadrant_objects.items():
+            angle = math.radians(i * 30 - 90 + 15)
+            x = cx + ring_mid * math.cos(angle)
+            y = cy + ring_mid * math.sin(angle)
+            circ = self.canvas.create_oval(x - note_r, y - note_r,
+                                           x + note_r, y + note_r,
+                                           fill=self.colors['note_default'],
+                                           outline='white', width=1)
+            txt  = self.canvas.create_text(x, y, text=note, fill='white',
+                                           font=('Arial',
+                                                 max(7, int(ws * 0.045)),
+                                                 'bold'))
+            self.note_objects[note] = {'circle': circ, 'text': txt}
+
+    # ── Public API ────────────────────────────────────────────────────────────
+
+    _NOTE_ALIASES = {
+        'F#': 'Gb', 'C#': 'Db', 'G#': 'Ab', 'D#': 'Eb', 'A#': 'Bb',
+    }
+
+    def update_hand_position(self, x, y, frame_w=None, frame_h=None):
+        """
+        Update the wheel from raw camera-frame hand coordinates.
+
+        x, y        – pixel position in the camera frame
+        frame_w/h   – frame dimensions; defaults to CAM_W × CAM_H
+
+        The x-axis is flipped internally to correct the camera mirror so that
+        physically moving right → right quadrant, left → left quadrant.
+        """
+        fw = frame_w or CAM_W
+        fh = frame_h or CAM_H
+
+        # Flip x to unmirror: moving physically right decreases camera-x,
+        # so we negate dx before computing the angle.
+        dx = -(x - fw / 2)
+        dy =   y - fh / 2
+
+        if math.sqrt(dx * dx + dy * dy) < min(fw, fh) * 0.04:
+            return   # dead-zone near centre
+
+        # Clockwise angle from 12 o'clock
+        angle = math.degrees(math.atan2(dx, -dy)) % 360
+
+        note_index    = int(angle // 30)
+        selected_note = self.notes[note_index]
+
+        quadrant = next(
+            (qn for qn, qd in self.quadrants.items()
+             if selected_note in qd['notes']),
+            None)
+
+        for qn, poly in self.quadrant_objects.items():
+            self.canvas.itemconfig(poly,
+                                   state='normal' if qn == quadrant else 'hidden')
+        self.current_quadrant = quadrant
+
+        if self.current_note and self.current_note != selected_note:
+            self._highlight_note(self.current_note, False)
+        self._highlight_note(selected_note, True)
+        self.current_note = selected_note
+        self.canvas.itemconfig(self.center_note_text, text=selected_note)
+
+    def clear_selection(self):
+        """Clear all highlights (call when hand leaves frame)."""
+        for poly in self.quadrant_objects.values():
             self.canvas.itemconfig(poly, state='hidden')
-        
-        # Show selected quadrant highlight
-        if thumb_direction in self.quadrant_objects:
-            self.canvas.itemconfig(self.quadrant_objects[thumb_direction],
-                                  state='normal')
-            self.current_quadrant = thumb_direction
-            
-            # Reset note highlight when quadrant changes
-            if self.current_note:
-                self.highlight_note(self.current_note, False)
-                self.current_note = None
-                self.canvas.itemconfig(self.center_note_text, text="")
-    
-    def update_hand(self, hand_movement):
-        """Call this when hand movement changes"""
-        if not self.current_quadrant:
-            return  # No quadrant selected yet
-        
-        if hand_movement in self.hand_to_position:
-            # Get the note from current quadrant
-            position = self.hand_to_position[hand_movement]
-            quadrant_notes = self.quadrants[self.current_quadrant]['notes']
-            
-            if position < len(quadrant_notes):
-                selected_note = quadrant_notes[position]
-                
-                # Update highlights
-                if self.current_note:
-                    self.highlight_note(self.current_note, False)
-                
-                self.highlight_note(selected_note, True)
-                self.current_note = selected_note
-                self.canvas.itemconfig(self.center_note_text, text=selected_note)
-    
-    def update_background(self, cv2_frame):
-        """
-        Update the canvas background with a camera frame (BGR numpy array).
-        Only has effect when the GUI was created with camera_overlay=True.
-        Frame is resized to 600x600 and drawn behind the ring.
-        """
-        if not self._camera_overlay or self._bg_image_id is None:
-            return
-        try:
-            from PIL import Image, ImageTk
-            import cv2
-            frame = cv2.resize(cv2_frame, (600, 600))
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            self._current_photo = ImageTk.PhotoImage(Image.fromarray(rgb))
-            self.canvas.itemconfig(self._bg_image_id, image=self._current_photo)
-        except Exception:
-            pass
-
-    def highlight_note(self, note_name, highlight=True):
-        """Helper to highlight/unhighlight a note"""
-        if note_name in self.note_objects:
-            color = self.colors['note_highlight'] if highlight else self.colors['note_default']
-            self.canvas.itemconfig(self.note_objects[note_name]['circle'],
-                                  fill=color)
-    
-    def update_gesture(self, thumb_direction, hand_movement):
-        """Combined update for both gestures"""
-        self.update_thumb(thumb_direction)
-        # Small delay to ensure visual separation (optional)
-        self.root.after(50, lambda: self.update_hand(hand_movement))
-
-    # Note name equivalence: gesture systems may use flats (Gb) vs sharps (F#)
-    _NOTE_ALIASES = {'Gb': 'F#', 'Db': 'C#', 'Ab': 'G#', 'Eb': 'D#', 'Bb': 'A#'}
+        if self.current_note:
+            self._highlight_note(self.current_note, False)
+        self.current_quadrant = None
+        self.current_note     = None
+        self.canvas.itemconfig(self.center_note_text, text='')
 
     def update_from_note(self, note):
         """
-        Update the GUI from a detected note (e.g. from gesture/camera).
-        Call this when maestro/gesture system detects a note.
-        Accepts both sharp (F#) and flat (Gb) notation.
+        Highlight a note by name (sharp or flat spelling accepted).
+        Pass None / '' to clear the selection.
         """
-        if note is None or note == '':
-            # Clear selection
-            for quad_name, poly in self.quadrant_objects.items():
-                self.canvas.itemconfig(poly, state='hidden')
-            if self.current_note:
-                self.highlight_note(self.current_note, False)
-            self.current_quadrant = None
-            self.current_note = None
-            self.canvas.itemconfig(self.center_note_text, text='')
+        if not note:
+            self.clear_selection()
             return
-
-        # Normalize flat -> sharp to match GUI note labels
         note = self._NOTE_ALIASES.get(note, note)
         if note not in self.note_objects:
             return
 
-        # Find quadrant and position for this note
-        for quad_name, quad_data in self.quadrants.items():
-            if note in quad_data['notes']:
-                pos = quad_data['notes'].index(note)
-                hand_movement = next(
-                    (m for m, p in self.hand_to_position.items() if p == pos),
-                    None
-                )
-                if hand_movement is not None:
-                    self.update_thumb(quad_name)
-                    self.update_hand(hand_movement)
-                break
+        # Build a camera-space point that, after the mirror flip inside
+        # update_hand_position, produces the correct wheel angle.
+        #
+        # Ring draws note i at clockwise angle:  theta = i*30 + 15  degrees
+        # update_hand_position computes:         angle = atan2(-dx_cam, -dy)
+        # We want angle == theta, so:
+        #   dx_cam = -r * sin(theta_rad)   (the flip negates it back)
+        #   dy     =  r * cos(theta_rad)  ... wait, atan2(dx,-dy)=theta means
+        #              dx = r*sin(theta), -dy = r*cos(theta) → dy = -r*cos(theta)
+        # But dx = -(x - cx), so x - cx = -dx_cam ... let's be explicit:
+        #
+        #   After flip:  eff_dx = -(x - cx_cam)
+        #   We want atan2(eff_dx, -dy) = theta_rad
+        #     → eff_dx = r * sin(theta_rad)
+        #     → dy     = -r * cos(theta_rad)   [since atan2(eff_dx, -dy)=theta
+        #                                        means -dy = r*cos → dy=-r*cos]
+        #   And eff_dx = -(x - cx_cam) = r*sin → x = cx_cam - r*sin(theta_rad)
+        #   dy = y - cy_cam = -r*cos(theta_rad) → y = cy_cam - r*cos(theta_rad)
 
-# Test the GUI
-if __name__ == "__main__":
+        idx       = self.notes.index(note)
+        theta_rad = math.radians(idx * 30 + 15)
+        r         = min(CAM_W, CAM_H) * 0.3
+        x = CAM_W / 2 - r * math.sin(theta_rad)
+        y = CAM_H / 2 - r * math.cos(theta_rad)
+        self.update_hand_position(x, y)
+
+    def update_background(self, cv2_frame):
+        """
+        Render a BGR OpenCV frame onto the main camera canvas.
+        Only active when camera_overlay=True was passed to __init__.
+        """
+        if not self._camera_overlay or self._cam_image_id is None:
+            return
+        try:
+            from PIL import Image, ImageTk
+            import cv2
+            frame = cv2.resize(cv2_frame, (CAM_W, CAM_H))
+            rgb   = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            self._current_photo = ImageTk.PhotoImage(Image.fromarray(rgb))
+            self.cam_canvas.itemconfig(self._cam_image_id,
+                                       image=self._current_photo)
+        except Exception:
+            pass
+
+    # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _highlight_note(self, note_name, highlight=True):
+        if note_name in self.note_objects:
+            color = (self.colors['note_highlight'] if highlight
+                     else self.colors['note_default'])
+            self.canvas.itemconfig(self.note_objects[note_name]['circle'],
+                                   fill=color)
+
+
+# ── Standalone test ───────────────────────────────────────────────────────────
+if __name__ == '__main__':
     root = tk.Tk()
-    root.title("Circle of Fifths Ring")
-    root.configure(bg='#1e1e1e')
-    
+    root.title('MaestroSynth — move mouse to navigate')
+    root.geometry(f'{CAM_W}x{CAM_H}')
+    root.resizable(False, False)
+    root.configure(bg='#000000')
+
     app = CircleOfFifthsRing(root)
-    
-    # Simple test buttons
-    test_frame = tk.Frame(root, bg='#1e1e1e')
-    test_frame.pack(pady=10)
-    
-    tk.Label(test_frame, text="Test Controls:", fg='white', bg='#1e1e1e').pack()
-    
-    thumb_frame = tk.Frame(test_frame, bg='#1e1e1e')
-    thumb_frame.pack()
-    for thumb in ['up', 'right', 'down', 'left']:
-        btn = tk.Button(thumb_frame, text=f"Thumb {thumb}",
-                       command=lambda t=thumb: app.update_thumb(t))
-        btn.pack(side=tk.LEFT, padx=2)
-    
-    hand_frame = tk.Frame(test_frame, bg='#1e1e1e')
-    hand_frame.pack(pady=5)
-    for hand in ['left', 'up', 'right']:
-        btn = tk.Button(hand_frame, text=f"Hand {hand}",
-                       command=lambda h=hand: app.update_hand(h))
-        btn.pack(side=tk.LEFT, padx=2)
-    
+
+    # Crosshair at camera-frame centre to aid testing
+    cx, cy = CAM_W // 2, CAM_H // 2
+    app.cam_canvas.create_line(cx - 30, cy, cx + 30, cy, fill='#444', width=1)
+    app.cam_canvas.create_line(cx, cy - 30, cx, cy + 30, fill='#444', width=1)
+    app.cam_canvas.create_text(cx + 6, cy - 14, text='centre',
+                               fill='#555', font=('Arial', 9))
+
+    # Moving the mouse over the camera area drives the wheel
+    app.cam_canvas.bind('<Motion>',
+                        lambda e: app.update_hand_position(e.x, e.y))
+    app.cam_canvas.bind('<Leave>',
+                        lambda e: app.clear_selection())
+
     root.mainloop()
-
-
-
