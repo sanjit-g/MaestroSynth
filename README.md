@@ -1,5 +1,5 @@
 # MaestroSynth
-Project for BU Hackathon 2026. Uses hand gestures to control an Omnichord-style MIDI Controller.
+Project for BU Hackathon 2026. Uses hand gestures to control an Omnichord-style MIDI Controller. (Winner of Best Overall Hack Award)
 
 MaestroSynth allows users to play and modulate different chords by moving their hand and fingers in front of the camera. The script tracks hand placement relative to the camera, highlighting the current selected chord as well as the residing quarant in the circle of fifths, sending MIDI signals to a DAW.
 
